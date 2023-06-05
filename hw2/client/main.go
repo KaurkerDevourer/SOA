@@ -10,7 +10,7 @@ import (
 	"os"
 	"io"
 	"github.com/google/uuid"
-	"github.com/KaurkerDevourer/SOA/hw1/pkg/mafiapb"
+	"github.com/KaurkerDevourer/SOA/hw2/pkg/mafiapb"
 	"google.golang.org/grpc"
 )
 
