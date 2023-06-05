@@ -17,3 +17,9 @@ docker build -t kaurker/mafia_client -f client/Dockerfile .
 ./bin/server
 ./bin/client
 ```
+
+## На всякий случай, сборка бинарей:
+```
+make server
+make client
+```
