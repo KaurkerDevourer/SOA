@@ -1,0 +1,14 @@
+version: '3'
+
+services:
+  server:
+    image: kaurker/mafia_server
+    expose:
+      - "50051"
+  
+  client:
+    image: kaurker/mafia_client
+    expose:
+      - "50051"
+    depends_on:
+      - server

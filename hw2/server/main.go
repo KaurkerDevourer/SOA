@@ -9,7 +9,7 @@ import (
 	"time"
 	"sync"
 
-	"github.com/KaurkerDevourer/SOA/hw2/pkg/mafiapb"
+	"hw2/pkg/mafiapb"
 	"github.com/google/uuid"
 	"google.golang.org/grpc"
 	"github.com/pkg/errors"

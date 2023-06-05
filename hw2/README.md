@@ -4,22 +4,16 @@
 
 Клиент принимает на вход ник, y/n (Бот играет или нет) и количество игр в которые он сыграет.
 
-## Запуск сервера
+## Билд сервера и клиента
 Из корневой папки
 ```
-make server
-```
-или из bin
-```
-./server
+docker build -t kaurker/mafia_server -f server/Dockerfile .
+docker build -t kaurker/mafia_client -f client/Dockerfile .
 ```
 
-## Запуск клиента
-Из корневой папки
+## Запуск сервера и клиента
+Из корневой папки, будет запущен на порте 50051
 ```
-make client
-```
-или из bin
-```
-./client
+./bin/server
+./bin/client
 ```
