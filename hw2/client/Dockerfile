@@ -13,4 +13,6 @@ RUN go mod download && go mod verify
 # Build executable
 RUN go build -o bin/client client/main.go
 
-CMD ["./bin/client"]
+ENTRYPOINT ["./bin/client"]
+
+EXPOSE 50051

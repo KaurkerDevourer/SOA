@@ -378,7 +378,7 @@ func (client *Client) playGame(response *mafia.UserInfo) {
 func main() {
 	log.Println("Client running ...")
  
-	conn, err := grpc.Dial(":50051", grpc.WithInsecure(), grpc.WithBlock())
+	conn, err := grpc.Dial(":50051", grpc.WithInsecure())
 	if err != nil {
 		log.Fatalln(err)
 	}

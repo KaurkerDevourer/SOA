@@ -13,4 +13,6 @@ RUN go mod download && go mod verify
 # Build executable
 RUN go build -o bin/server server/main.go
 
-CMD ["./bin/server"]
+ENTRYPOINT ["./bin/server"]
+
+EXPOSE 50051

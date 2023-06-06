@@ -4,12 +4,7 @@
 
 Клиент принимает на вход ник, y/n (Бот играет или нет) и количество игр в которые он сыграет.
 
-## Билд сервера и клиента
-Из корневой папки
-```
-docker build -t kaurker/mafia_server -f server/Dockerfile .
-docker build -t kaurker/mafia_client -f client/Dockerfile .
-```
+## Дз запустится и без докера на маке/линуксе любом.
 
 ## Запуск сервера и клиента
 Из корневой папки, будет запущен на порте 50051
@@ -18,8 +13,31 @@ docker build -t kaurker/mafia_client -f client/Dockerfile .
 ./bin/client
 ```
 
-## На всякий случай, сборка бинарей:
+## На всякий случай, сборка бинарей и grpc:
 ```
+make compile
 make server
 make client
 ```
+
+## Если все же хотим докер. Билд сервера и клиента
+Из корневой папки
+```
+docker build -t kaurker/mafia_server -f server/Dockerfile .
+docker build -t kaurker/mafia_client -f client/Dockerfile .
+```
+Поднимаем
+```
+docker compose up -d
+```
+
+А затем, поднимем сервер
+```
+docker run -p 50051:50051 -it kaurker/mafia_server
+```
+Дальше в целом снова можем клиент не оборачивать, и так запустится 
+``` 
+make client
+./bin/client
+```
+Если не запустился, то TO BE CONTINUE
