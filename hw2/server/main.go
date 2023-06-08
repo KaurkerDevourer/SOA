@@ -92,7 +92,8 @@ func (gs *GameState) Start(Id string) {
 	for _, state := range gs.players {
 		userInfos = append(userInfos, state.user.ToProtobuf())
 	}
-	for _, state := range gs.players {
+	for i := range gs.players {
+		state := &gs.players[i]
 		votes := make([]*mafia.Vote, 0)
 		if state.role == Mafia {
 			votes = mafias
@@ -181,8 +182,8 @@ func (gs *GameState) ProcessDay() bool {
 	}
 	gs.wg.Add(gs.alivePlayersLeft)
 	gs.votes = map[string][]string{}
-	for _, state := range gs.players {
-		state.stream.Send(&mafia.WaitingGame{Type: mafia.EventType_ProcessDay})
+	for i := range gs.players {
+		gs.players[i].stream.Send(&mafia.WaitingGame{Type: mafia.EventType_ProcessDay})
 	}
 	gs.wg.Wait()
 	absolute := false
@@ -201,7 +202,8 @@ func (gs *GameState) ProcessDay() bool {
 	}
 	votes := ConvertToProto(gs.votes)
 	if absolute {
-		for _, state := range gs.players {
+		for i := range gs.players {
+			state := &gs.players[i]
 			if state.user.UniqueId.String() == kicked {
 				state.isAlive = false
 				gs.alivePlayersLeft--
@@ -218,8 +220,8 @@ func (gs *GameState) ProcessDay() bool {
 			}
 		}
 	} else {
-		for _, state := range gs.players {
-			state.stream.Send(&mafia.WaitingGame{Type: mafia.EventType_VoteResults, Msg: "Noone got kicked", Votes: votes})
+		for i := range gs.players {
+			gs.players[i].stream.Send(&mafia.WaitingGame{Type: mafia.EventType_VoteResults, Msg: "Noone got kicked", Votes: votes})
 		}
 	}
 	log.Println("Processed day ", gs.dayCount)
@@ -231,12 +233,13 @@ func (gs *GameState) ProcessDay() bool {
 func (gs *GameState) ProcessNight() {
 	gs.wg.Add(gs.nightStalkersLeft)
 	log.Println("Process night", gs.dayCount)
-	for _, state := range gs.players {
-		state.stream.Send(&mafia.WaitingGame{Type: mafia.EventType_ProcessNight})
+	for i := range gs.players {
+		gs.players[i].stream.Send(&mafia.WaitingGame{Type: mafia.EventType_ProcessNight})
 	}
 	gs.wg.Wait()
 	log.Println(gs.killedThisNight, " was killed this night.")
-	for _, state := range gs.players {
+	for i := range gs.players {
+		state := &gs.players[i]
 		if state.user.UniqueId == gs.killedThisNight {
 			state.isAlive = false
 			gs.alivePlayersLeft--
@@ -261,13 +264,13 @@ func (gs *GameState) ProcessGame() {
 	}
 	if gs.aliveMafiaLeft == 0 {
 		log.Println("Civilian wins!")
-		for _, state := range gs.players {
-			state.stream.Send(&mafia.WaitingGame{Type: mafia.EventType_GameFinished, Msg: "Civilian wins!"})
+		for i := range gs.players {
+			gs.players[i].stream.Send(&mafia.WaitingGame{Type: mafia.EventType_GameFinished, Msg: "Civilian wins!"})
 		}
 	} else {
 		log.Println("Mafia wins!")
-		for _, state := range gs.players {
-			state.stream.Send(&mafia.WaitingGame{Type: mafia.EventType_GameFinished, Msg: "Mafia wins!"})
+		for i := range gs.players {
+			gs.players[i].stream.Send(&mafia.WaitingGame{Type: mafia.EventType_GameFinished, Msg: "Mafia wins!"})
 		}
 	}
 	gs.status = Finished
@@ -354,8 +357,8 @@ func (s *Server) CreateNewUser(ctx context.Context, request *mafia.CreateUser) (
 }
 
 func (s *Server) NotifyNewPlayer(who []PlayerState, username string) {
-	for _, state := range who {
-		state.stream.Send(&mafia.WaitingGame{Type: mafia.EventType_PlayerJoined, Msg: username})
+	for i := range who {
+		who[i].stream.Send(&mafia.WaitingGame{Type: mafia.EventType_PlayerJoined, Msg: username})
 	}
 }
 
