@@ -8,6 +8,8 @@ import (
 	"net"
 	"time"
 	"sync"
+	"strconv"
+	"os"
 
 	"hw2/pkg/mafiapb"
 	"github.com/google/uuid"
@@ -77,7 +79,7 @@ type GameState struct {
 }
 
 func (gs *GameState) Start(Id string) {
-	log.Println("Starting game: ", Id)
+	fmt.Println("Starting game: ", Id)
 	gs.mutex.Lock()
 	rand.Seed(time.Now().UnixNano())
 	perm := rand.Perm(len(gs.players))
@@ -177,7 +179,7 @@ func ConvertToProto(votes map[string][]string) []*mafia.Vote {
 func (gs *GameState) ProcessDay() bool {
 	gs.dayCount++
 	if gs.dayCount == 1 {
-		log.Println("First day processed")
+		fmt.Println("First day processed")
 		return false
 	}
 	gs.wg.Add(gs.alivePlayersLeft)
@@ -224,7 +226,7 @@ func (gs *GameState) ProcessDay() bool {
 			gs.players[i].stream.Send(&mafia.WaitingGame{Type: mafia.EventType_VoteResults, Msg: "Noone got kicked", Votes: votes})
 		}
 	}
-	log.Println("Processed day ", gs.dayCount)
+	fmt.Println("Processed day ", gs.dayCount)
 	ret := gs.aliveMafiaLeft == 0 || (gs.aliveMafiaLeft == gs.alivePlayersLeft - gs.aliveMafiaLeft) || gs.alivePlayersLeft == 3
 	gs.mutex.Unlock()
 	return ret
@@ -232,12 +234,12 @@ func (gs *GameState) ProcessDay() bool {
 
 func (gs *GameState) ProcessNight() {
 	gs.wg.Add(gs.nightStalkersLeft)
-	log.Println("Process night", gs.dayCount)
+	fmt.Println("Process night", gs.dayCount)
 	for i := range gs.players {
 		gs.players[i].stream.Send(&mafia.WaitingGame{Type: mafia.EventType_ProcessNight})
 	}
 	gs.wg.Wait()
-	log.Println(gs.killedThisNight, " was killed this night.")
+	fmt.Println(gs.killedThisNight, " was killed this night.")
 	for i := range gs.players {
 		state := &gs.players[i]
 		if state.user.UniqueId == gs.killedThisNight {
@@ -263,12 +265,12 @@ func (gs *GameState) ProcessGame() {
 		gs.ProcessNight()
 	}
 	if gs.aliveMafiaLeft == 0 {
-		log.Println("Civilian wins!")
+		fmt.Println("Civilian wins!")
 		for i := range gs.players {
 			gs.players[i].stream.Send(&mafia.WaitingGame{Type: mafia.EventType_GameFinished, Msg: "Civilian wins!"})
 		}
 	} else {
-		log.Println("Mafia wins!")
+		fmt.Println("Mafia wins!")
 		for i := range gs.players {
 			gs.players[i].stream.Send(&mafia.WaitingGame{Type: mafia.EventType_GameFinished, Msg: "Mafia wins!"})
 		}
@@ -292,22 +294,21 @@ func (s *Server) Init() {
 }
  
 func main() {
-	log.Println("Server running ...")
+	fmt.Println("Server running ...")
  
 	lis, err := net.Listen("tcp", ":50051")
 	if err != nil {
 		log.Fatalln(err)
 	}
- 
-	fmt.Print("Total players in one game: \n\n>>> ")
-	_, err = fmt.Scanf("%d", &defaultPlayersAmount)
-	fmt.Print("Total mafia in one game: \n\n>>> ")
-	_, err = fmt.Scanf("%d", &defaultMafiaAmount)
 	srv := grpc.NewServer()
 	s := new(Server)
 	s.Init()
 	mafia.RegisterMafiaServiceServer(srv, s)
- 
+
+	players_in_room, _ := strconv.ParseInt(os.Getenv("PLAYERS_IN_ROOM"), 10, 32)
+	defaultPlayersAmount = int(players_in_room)
+	mafias_in_room, _ := strconv.ParseInt(os.Getenv("MAFIA_IN_ROOM"), 10, 32)
+	defaultMafiaAmount = int(mafias_in_room)
 	log.Fatalln(srv.Serve(lis))
 }
 
@@ -345,11 +346,11 @@ func (s *Server) CreateNewUser(ctx context.Context, request *mafia.CreateUser) (
 	s.mutex.Lock()
 	unique_id := uuid.New()
 	username := request.GetUsername()
-	log.Println("New user: ", username, "ID: ", unique_id)
+	fmt.Println("New user: ", username, "ID: ", unique_id)
 	user_info := UserInfo{unique_id, username}
 	s.users.data[unique_id] = user_info
 	s.users.totalUserCount++
-	log.Println("Total users: ", s.users.totalUserCount)
+	fmt.Println("Total users: ", s.users.totalUserCount)
 
 	s.mutex.Unlock()
 
@@ -388,7 +389,7 @@ func (s *Server) JoinGame(request *mafia.JoinMsg, stream mafia.MafiaService_Join
 		s.games[game_id].mutex.Unlock()
 		game.Start(game_id.String())
 	}
-	log.Println("Game id:", game_id)
+	fmt.Println("Game id:", game_id)
 
 	userInfos := make([]*mafia.UserInfo, 0)
 	for _, state := range s.games[game_id].players {

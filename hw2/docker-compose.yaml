@@ -2,17 +2,18 @@ version: '3'
 
 services:
   server:
-    image: kaurker/mafia_server
-    tty: true
-    stdin_open: true
-    expose:
-      - "50051"
-  
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    ports:
+      - "50051:50051"
+    environment:
+      PLAYERS_IN_ROOM: "4"
+      MAFIA_IN_ROOM: "1"
+
   client:
-    image: kaurker/mafia_client
-    tty: true
-    stdin_open: true
-    expose:
-      - "50051"
+    build:
+      context: .
+      dockerfile: client/Dockerfile
     depends_on:
       - server
