@@ -8,11 +8,14 @@ import (
 	"net"
 	"time"
 	"sync"
+	"strconv"
+	"os"
 
 	"github.com/KaurkerDevourer/SOA/hw3/pkg/mafiapb"
 	"github.com/google/uuid"
 	"google.golang.org/grpc"
 	"github.com/pkg/errors"
+	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 type UsersInfo struct {
@@ -64,6 +67,7 @@ type PlayerState struct {
 }
 
 type GameState struct {
+	game_id string
 	players []PlayerState
 	alivePlayersLeft int
 	aliveMafiaLeft int
@@ -72,13 +76,18 @@ type GameState struct {
 	status GameStatus
 	wg sync.WaitGroup
 	mutex sync.Mutex
+	isNight bool
 	votes map[string][]string
 	killedThisNight uuid.UUID
+	day_q amqp.Queue
+	night_q amqp.Queue
+	ch *amqp.Channel
 }
 
 func (gs *GameState) Start(Id string) {
-	log.Println("Starting game: ", Id)
+	fmt.Println("Starting game: ", Id)
 	gs.mutex.Lock()
+	gs.game_id = Id
 	rand.Seed(time.Now().UnixNano())
 	perm := rand.Perm(len(gs.players))
 	i := 0
@@ -92,7 +101,8 @@ func (gs *GameState) Start(Id string) {
 	for _, state := range gs.players {
 		userInfos = append(userInfos, state.user.ToProtobuf())
 	}
-	for _, state := range gs.players {
+	for i := range gs.players {
+		state := &gs.players[i]
 		votes := make([]*mafia.Vote, 0)
 		if state.role == Mafia {
 			votes = mafias
@@ -174,15 +184,16 @@ func ConvertToProto(votes map[string][]string) []*mafia.Vote {
 }
 
 func (gs *GameState) ProcessDay() bool {
+	gs.isNight = false
 	gs.dayCount++
 	if gs.dayCount == 1 {
-		log.Println("First day processed")
+		fmt.Println("First day processed")
 		return false
 	}
 	gs.wg.Add(gs.alivePlayersLeft)
 	gs.votes = map[string][]string{}
-	for _, state := range gs.players {
-		state.stream.Send(&mafia.WaitingGame{Type: mafia.EventType_ProcessDay})
+	for i := range gs.players {
+		gs.players[i].stream.Send(&mafia.WaitingGame{Type: mafia.EventType_ProcessDay})
 	}
 	gs.wg.Wait()
 	absolute := false
@@ -201,7 +212,8 @@ func (gs *GameState) ProcessDay() bool {
 	}
 	votes := ConvertToProto(gs.votes)
 	if absolute {
-		for _, state := range gs.players {
+		for i := range gs.players {
+			state := &gs.players[i]
 			if state.user.UniqueId.String() == kicked {
 				state.isAlive = false
 				gs.alivePlayersLeft--
@@ -218,25 +230,27 @@ func (gs *GameState) ProcessDay() bool {
 			}
 		}
 	} else {
-		for _, state := range gs.players {
-			state.stream.Send(&mafia.WaitingGame{Type: mafia.EventType_VoteResults, Msg: "Noone got kicked", Votes: votes})
+		for i := range gs.players {
+			gs.players[i].stream.Send(&mafia.WaitingGame{Type: mafia.EventType_VoteResults, Msg: "Noone got kicked", Votes: votes})
 		}
 	}
-	log.Println("Processed day ", gs.dayCount)
+	fmt.Println("Processed day ", gs.dayCount)
 	ret := gs.aliveMafiaLeft == 0 || (gs.aliveMafiaLeft == gs.alivePlayersLeft - gs.aliveMafiaLeft) || gs.alivePlayersLeft == 3
 	gs.mutex.Unlock()
 	return ret
 }
 
 func (gs *GameState) ProcessNight() {
+	gs.isNight = true
 	gs.wg.Add(gs.nightStalkersLeft)
-	log.Println("Process night", gs.dayCount)
-	for _, state := range gs.players {
-		state.stream.Send(&mafia.WaitingGame{Type: mafia.EventType_ProcessNight})
+	fmt.Println("Process night", gs.dayCount)
+	for i := range gs.players {
+		gs.players[i].stream.Send(&mafia.WaitingGame{Type: mafia.EventType_ProcessNight})
 	}
 	gs.wg.Wait()
-	log.Println(gs.killedThisNight, " was killed this night.")
-	for _, state := range gs.players {
+	fmt.Println(gs.killedThisNight, " was killed this night.")
+	for i := range gs.players {
+		state := &gs.players[i]
 		if state.user.UniqueId == gs.killedThisNight {
 			state.isAlive = false
 			gs.alivePlayersLeft--
@@ -252,6 +266,34 @@ func (gs *GameState) ProcessNight() {
 }
 
 func (gs *GameState) ProcessGame() {
+	conn, err := amqp.Dial("amqp://guest:guest@rabbitmq:5672")
+	failOnError(err, "Failed to connect to RabbitMQ")
+	defer conn.Close()
+
+	gs.ch, err = conn.Channel()
+	failOnError(err, "Failed to open a channel")
+	defer gs.ch.Close()
+
+	gs.day_q, err = gs.ch.QueueDeclare(
+		gs.game_id, // name
+		false,   // durable
+		false,   // delete when unused
+		false,   // exclusive
+		false,   // no-wait
+		nil,     // arguments
+	)
+	failOnError(err, "Failed to declare the day queue")
+
+	gs.night_q, err = gs.ch.QueueDeclare(
+		gs.game_id + "MAFIA", // name
+		false,   // durable
+		false,   // delete when unused
+		false,   // exclusive
+		false,   // no-wait
+		nil,     // arguments
+	)
+	failOnError(err, "Failed to declare the night queue")
+
 	for {
 		end := gs.ProcessDay()
 		if end {
@@ -260,14 +302,14 @@ func (gs *GameState) ProcessGame() {
 		gs.ProcessNight()
 	}
 	if gs.aliveMafiaLeft == 0 {
-		log.Println("Civilian wins!")
-		for _, state := range gs.players {
-			state.stream.Send(&mafia.WaitingGame{Type: mafia.EventType_GameFinished, Msg: "Civilian wins!"})
+		fmt.Println("Civilian wins!")
+		for i := range gs.players {
+			gs.players[i].stream.Send(&mafia.WaitingGame{Type: mafia.EventType_GameFinished, Msg: "Civilian wins!"})
 		}
 	} else {
-		log.Println("Mafia wins!")
-		for _, state := range gs.players {
-			state.stream.Send(&mafia.WaitingGame{Type: mafia.EventType_GameFinished, Msg: "Mafia wins!"})
+		fmt.Println("Mafia wins!")
+		for i := range gs.players {
+			gs.players[i].stream.Send(&mafia.WaitingGame{Type: mafia.EventType_GameFinished, Msg: "Mafia wins!"})
 		}
 	}
 	gs.status = Finished
@@ -287,19 +329,30 @@ func (s *Server) Init() {
 	s.games = make(map[uuid.UUID]*GameState)
 	s.waitingGames = make([]uuid.UUID, 0)
 }
+
+func failOnError(err error, msg string) {
+	if err != nil {
+		log.Fatalf("%s: %s", msg, err)
+		panic(fmt.Sprintf("%s: %s", msg, err))
+	}
+}
  
 func main() {
-	log.Println("Server running ...")
+	fmt.Println("Server running ...")
  
 	lis, err := net.Listen("tcp", ":50051")
 	if err != nil {
 		log.Fatalln(err)
 	}
- 
-	fmt.Print("Total players in one game: \n\n>>> ")
-	_, err = fmt.Scanf("%d", &defaultPlayersAmount)
-	fmt.Print("Total mafia in one game: \n\n>>> ")
-	_, err = fmt.Scanf("%d", &defaultMafiaAmount)
+
+	players_in_room, err := strconv.ParseInt(os.Getenv("PLAYERS_IN_ROOM"), 10, 32)
+	if err == nil {
+		defaultPlayersAmount = int(players_in_room)
+	}
+	mafias_in_room, err := strconv.ParseInt(os.Getenv("MAFIA_IN_ROOM"), 10, 32)
+	if err == nil {
+		defaultMafiaAmount = int(mafias_in_room)
+	}
 	srv := grpc.NewServer()
 	s := new(Server)
 	s.Init()
@@ -342,11 +395,11 @@ func (s *Server) CreateNewUser(ctx context.Context, request *mafia.CreateUser) (
 	s.mutex.Lock()
 	unique_id := uuid.New()
 	username := request.GetUsername()
-	log.Println("New user: ", username, "ID: ", unique_id)
+	fmt.Println("New user: ", username, "ID: ", unique_id)
 	user_info := UserInfo{unique_id, username}
 	s.users.data[unique_id] = user_info
 	s.users.totalUserCount++
-	log.Println("Total users: ", s.users.totalUserCount)
+	fmt.Println("Total users: ", s.users.totalUserCount)
 
 	s.mutex.Unlock()
 
@@ -354,8 +407,8 @@ func (s *Server) CreateNewUser(ctx context.Context, request *mafia.CreateUser) (
 }
 
 func (s *Server) NotifyNewPlayer(who []PlayerState, username string) {
-	for _, state := range who {
-		state.stream.Send(&mafia.WaitingGame{Type: mafia.EventType_PlayerJoined, Msg: username})
+	for i := range who {
+		who[i].stream.Send(&mafia.WaitingGame{Type: mafia.EventType_PlayerJoined, Msg: username})
 	}
 }
 
@@ -385,7 +438,7 @@ func (s *Server) JoinGame(request *mafia.JoinMsg, stream mafia.MafiaService_Join
 		s.games[game_id].mutex.Unlock()
 		game.Start(game_id.String())
 	}
-	log.Println("Game id:", game_id)
+	fmt.Println("Game id:", game_id)
 
 	userInfos := make([]*mafia.UserInfo, 0)
 	for _, state := range s.games[game_id].players {
@@ -452,5 +505,67 @@ func (s *Server) NightVote(ctx context.Context, request *mafia.VoteRequest) (*ma
 		}
 	}
 	game.wg.Done()
+	return &mafia.VoteResponse{Ok: "OK"}, nil
+}
+
+func (s *Server) ProcessMsg(ctx context.Context, request *mafia.MsgRequest) (*mafia.VoteResponse, error) {
+	game_id, _ := uuid.Parse(request.GetGameId())
+
+	game, ok := s.games[game_id]
+	if (!ok) {
+		return &mafia.VoteResponse{Ok: "No such game:" + game_id.String()}, nil
+	}
+	userId, _ := uuid.Parse(request.GetUserId())
+	userRole := Ghost
+	username := ""
+	for _, x := range game.players {
+		if x.user.UniqueId == userId && x.isAlive {
+			userRole = x.role
+			username = x.user.Nickname
+		}
+	}
+
+	if userRole == Ghost {
+		return &mafia.VoteResponse{Ok: "You are dead or not in this game, you cant chat"}, nil
+	}
+
+	if (game.isNight && userRole != Mafia) {
+		return &mafia.VoteResponse{Ok: "It's night, you cant chat during the night"}, nil
+	}
+
+	msgToWrite := "Player " + username + " : " + "\"" + request.Msg + "\"" 
+	ctx = context.Background()
+	if game.isNight {
+		for i := 0; i < defaultMafiaAmount; i++ {
+			err := game.ch.PublishWithContext(
+				ctx,
+				"",
+				game.night_q.Name,
+				false,
+				false,
+				amqp.Publishing{
+					ContentType: "text/plain",
+					Body:        []byte(msgToWrite),
+				},
+			)
+			failOnError(err, "Night publish failed")
+		}
+	} else {
+		for i := 0; i < defaultPlayersAmount; i++ {
+			err := game.ch.PublishWithContext(
+				ctx,
+				"",
+				game.day_q.Name,
+				false,
+				false,
+				amqp.Publishing{
+					ContentType: "text/plain",
+					Body:        []byte(msgToWrite),
+				},
+			)
+			failOnError(err, "Day publish failed")
+		}
+	}
+
 	return &mafia.VoteResponse{Ok: "OK"}, nil
 }

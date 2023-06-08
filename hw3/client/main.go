@@ -12,13 +12,14 @@ import (
 	"github.com/google/uuid"
 	"github.com/KaurkerDevourer/SOA/hw3/pkg/mafiapb"
 	"google.golang.org/grpc"
+	"github.com/streadway/amqp"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 type Client struct {
 	cli mafia.MafiaServiceClient
 	stream mafia.MafiaService_JoinGameClient
 	isBot bool
-	ctx context.Context
 }
 
 type Role uint8
@@ -186,7 +187,7 @@ func (client *Client) Vote(gs *GameState, scanner *bufio.Scanner, isDay, isSheri
 
 		if isDay {
 			fmt.Println("You are trying to kick ", kickname)
-			response, err := client.cli.DayVote(client.ctx, &mafia.VoteRequest{
+			response, err := client.cli.DayVote(context.Background(), &mafia.VoteRequest{
 				GameId: gs.game_id.String(),
 				UserId: gs.user.UniqueId.String(),
 				KickUserId: kick_id,
@@ -201,14 +202,14 @@ func (client *Client) Vote(gs *GameState, scanner *bufio.Scanner, isDay, isSheri
 			} else {
 				fmt.Println("You are trying to kill ", kickname)
 			}
-			response, err := client.cli.NightVote(client.ctx, &mafia.VoteRequest{
+			response, err := client.cli.NightVote(context.Background(), &mafia.VoteRequest{
 				GameId: gs.game_id.String(),
 				UserId: gs.user.UniqueId.String(),
 				KickUserId: kick_id,
 			})
 			if err == nil && (response.GetOk() == "Your guess is right" || response.GetOk() == "Your guess is wrong" || response.GetOk() == "OK") {
 				if isSheriff && !isDay {
-					log.Println(response.GetOk())
+					fmt.Println(response.GetOk())
 					if response.GetOk() == "Your guess is right" {
 						for i, x := range gs.playersAlive {
 							if x.UniqueId.String() == kick_id {
@@ -259,35 +260,73 @@ func (client *Client) Start(gs *GameState) {
 
 		switch event.GetType() {
 		case mafia.EventType_ProcessDay:
-			log.Println("Day processing")
+			if gs.role == Ghost {
+				fmt.Println("Day processing")
+				continue
+			}
+			fmt.Println("Day processing, chat is on, if you dont want to type in chat print \"STOP CHAT\" in console")
+			for {
+				if client.isBot {
+					client.cli.ProcessMsg(context.Background(), &mafia.MsgRequest{GameId: gs.game_id.String(), UserId: gs.user.UniqueId.String(), Msg: "Hi"})
+					break
+				}
+				scanner.Scan()
+				input := scanner.Text()
+				if input == "STOP CHAT" {
+					fmt.Println("Chat stopped, now you need to vote")
+					break
+				}
+				client.cli.ProcessMsg(context.Background(), &mafia.MsgRequest{GameId: gs.game_id.String(), UserId: gs.user.UniqueId.String(), Msg: input})
+			}
 			client.Vote(gs, scanner, true, true)
 		case mafia.EventType_VoteResults:
 			votes := event.GetVotes()
 			for _, vote := range votes {
 				byWhome := gs.ConvertToNickname(vote.ByWhome)
 				who := gs.ConvertToNickname([]string{vote.Who})[0]
-				log.Println(byWhome, " voted for ", who)
+				fmt.Println(byWhome, " voted for ", who)
 			}
 			if event.GetMsg() == "You got kicked" {
 				gs.role = Ghost
-				log.Println(event.GetMsg())
+				fmt.Println(event.GetMsg())
 				continue
 			}
 			if event.GetMsg() == "Noone got kicked" {
-				log.Println(event.GetMsg())
+				fmt.Println(event.GetMsg())
 				continue
 			}
 			dead, _ := uuid.Parse(event.GetId())
 			for i, x := range gs.playersAlive {
 				if x.UniqueId == dead {
-					log.Println("Player " + x.Nickname + " was kicked")
+					fmt.Println("Player " + x.Nickname + " was kicked")
 					gs.playersAlive[len(gs.playersAlive) - 1], gs.playersAlive[i] = gs.playersAlive[i], gs.playersAlive[len(gs.playersAlive) - 1]
 					gs.playersAlive = gs.playersAlive[:len(gs.playersAlive) - 1]
 					break
 				}
 			}
 		case mafia.EventType_ProcessNight:
-			log.Println("Night processing")
+			if gs.role == Ghost {
+				fmt.Println("Night processing")
+				continue
+			}
+			if gs.role == Mafia {
+				fmt.Println("Night processing, chat is on, if you dont want to type in chat print \"STOP CHAT\" in console")
+				for {
+					if client.isBot {
+						client.cli.ProcessMsg(context.Background(), &mafia.MsgRequest{GameId: gs.game_id.String(), UserId: gs.user.UniqueId.String(), Msg: "Muchas grasias"})
+						break
+					}
+					scanner.Scan()
+					input := scanner.Text()
+					if input == "STOP CHAT" {
+						fmt.Println("Chat stopped, now you need to vote")
+						break
+					}
+					client.cli.ProcessMsg(context.Background(), &mafia.MsgRequest{GameId: gs.game_id.String(), UserId: gs.user.UniqueId.String(), Msg: input})
+				}
+			} else {
+				fmt.Println("Night processing")
+			}
 			if gs.role == Mafia || gs.role == Sheriff {
 				client.Vote(gs, scanner, false, gs.role == Sheriff)
 			}
@@ -295,21 +334,21 @@ func (client *Client) Start(gs *GameState) {
 		case mafia.EventType_NightResults:
 			if event.GetMsg() == "You got killed" {
 				gs.role = Ghost
-				log.Println(event.GetMsg())
+				fmt.Println(event.GetMsg())
 				continue
 			}
 
 			dead, _ := uuid.Parse(event.GetId())
 			for i, x := range gs.playersAlive {
 				if x.UniqueId == dead {
-					log.Println("Player " + x.Nickname + " was killed")
+					fmt.Println("Player " + x.Nickname + " was killed")
 					gs.playersAlive[len(gs.playersAlive) - 1], gs.playersAlive[i] = gs.playersAlive[i], gs.playersAlive[len(gs.playersAlive) - 1]
 					gs.playersAlive = gs.playersAlive[:len(gs.playersAlive) - 1]
 					break
 				}
 			}
 		case mafia.EventType_GameFinished:
-			log.Println(event.GetMsg())
+			fmt.Println(event.GetMsg())
 			return
 		}
 	}
@@ -321,6 +360,83 @@ func ConvertToList(mafias []*mafia.Vote) []string {
 		ans[i] = x.Who
 	}
 	return ans
+}
+
+func failOnError(err error, msg string) {
+	if err != nil {
+		log.Fatalf("%s: %s", msg, err)
+		panic(fmt.Sprintf("%s: %s", msg, err))
+	}
+}
+
+func (client *Client) StartChat(gs *GameState) {
+	conn, err := amqp.Dial("amqp://guest:guest@rabbitmq:5672")
+	failOnError(err, "Failed to connect to RabbitMQ")
+	defer conn.Close()
+
+	ch, err := conn.Channel()
+	failOnError(err, "Failed to open a channel")
+	defer ch.Close()
+
+	day_q, err := ch.QueueDeclare(
+		gs.game_id.String(), // name
+		false,   // durable
+		false,   // delete when unused
+		false,   // exclusive
+		false,   // no-wait
+		nil,     // arguments
+	)
+	failOnError(err, "Failed to declare the day queue")
+
+	day_msgs, err := ch.Consume(
+		day_q.Name, // queue
+		gs.user.Nickname,     // consumer
+		true,   // auto-ack
+		false,  // exclusive
+		false,  // no-local
+		false,  // no-wait
+		nil,    // args
+	)
+	failOnError(err, "Failed to register a consumer")
+	var forever chan struct{}
+
+	if gs.role == Mafia {
+		night_q, err := ch.QueueDeclare(
+			gs.game_id.String() + "MAFIA", // name
+			false,   // durable
+			false,   // delete when unused
+			false,   // exclusive
+			false,   // no-wait
+			nil,     // arguments
+		)
+		failOnError(err, "Failed to declare the day queue")
+
+		
+		night_msgs, err := ch.Consume(
+			night_q.Name, // queue
+			gs.user.Nickname + "MAFIA", // consumer
+			true,   // auto-ack
+			false,  // exclusive
+			false,  // no-local
+			false,  // no-wait
+			nil,    // args
+		)
+		failOnError(err, "Failed to register a consumer")
+
+		go func () {
+			for d := range night_msgs {
+				fmt.Println(string(d.Body))
+			}
+		}()
+	}
+
+	go func() {
+		for d := range day_msgs {
+			fmt.Println(string(d.Body))
+		}
+	}()
+
+	<- forever
 }
 
 func (client *Client) playGame(response *mafia.UserInfo) {
@@ -337,13 +453,13 @@ func (client *Client) playGame(response *mafia.UserInfo) {
 		}
 		switch event.GetType() {
 		case mafia.EventType_EventWelcome:
-			log.Println("You joined game ", event.GetId(), " Players list: ", ConvertToPrint(event.GetPlayers()))
+			fmt.Println("You joined game ", event.GetId(), " Players list: ", ConvertToPrint(event.GetPlayers()))
 		case mafia.EventType_PlayerJoined:
-			log.Println("Player joined the game", event.GetMsg())
+			fmt.Println("Player joined the game", event.GetMsg())
 		case mafia.EventType_GameStarted:
-			log.Println("Game", event.GetId(), " started. Your role is ", event.GetMsg(), "Players list: ", ConvertToPrint(event.GetPlayers()), "Mafia count: ", event.GetCount())
+			fmt.Println("Game", event.GetId(), " started. Your role is ", event.GetMsg(), "Players list: ", ConvertToPrint(event.GetPlayers()), "Mafia count: ", event.GetCount())
 			if roleMap[event.GetMsg()] == Mafia {
-				log.Println("Mafia list: ", ConvertToList(event.GetVotes()))
+				fmt.Println("Mafia list: ", ConvertToList(event.GetVotes()))
 			}
 			gs := new(GameState)
 			gs.user = GetPlayers([]*mafia.UserInfo{response})[0]
@@ -369,6 +485,7 @@ func (client *Client) playGame(response *mafia.UserInfo) {
 					}
 				}
 			}
+			go client.StartChat(gs)
 			client.Start(gs)
 			return
 		}
@@ -376,19 +493,18 @@ func (client *Client) playGame(response *mafia.UserInfo) {
 }
  
 func main() {
-	log.Println("Client running ...")
+	fmt.Println("Client running ...")
  
-	conn, err := grpc.Dial(":50051", grpc.WithInsecure())
+	conn, err := grpc.Dial("server:50051", grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Fatalln(err)
 	}
 	defer conn.Close()
- 
+
 	cli := mafia.NewMafiaServiceClient(conn)
 	client := new(Client)
 	client.cli = cli
 	client.isBot = false
-	client.ctx = context.Background()
 
 	scanner := bufio.NewScanner(os.Stdin)
 	fmt.Print("Your nickname: \n\n>>> ")
@@ -410,16 +526,16 @@ func main() {
 
 	_, err = fmt.Scanf("%d", &numberOfGames)
  
-	response, err := client.cli.CreateNewUser(client.ctx, request)
+	response, err := client.cli.CreateNewUser(context.Background(), request)
 	if err != nil {
 		log.Fatalln(err)
 	}
  
-	log.Println("Response:", response.GetId())
+	fmt.Println("Response:", response.GetId())
 
 	for k := 0; k < numberOfGames; k++ {
 		joinMsg := mafia.JoinMsg{UserInfo: response}
-		stream, err := client.cli.JoinGame(client.ctx, &joinMsg)
+		stream, err := client.cli.JoinGame(context.Background(), &joinMsg)
 		if err != nil {
 			log.Fatalln(err)
 		}

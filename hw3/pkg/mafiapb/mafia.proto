@@ -10,6 +10,8 @@ service MafiaService {
     rpc DayVote (VoteRequest) returns (VoteResponse) {}
 
     rpc NightVote (VoteRequest) returns (VoteResponse) {}
+
+    rpc ProcessMsg (MsgRequest) returns (VoteResponse) {}
 }
 
 message CreateUser {
@@ -58,4 +60,10 @@ message VoteRequest {
 
 message VoteResponse {
     string ok = 1;
+}
+
+message MsgRequest {
+    string game_id = 1;
+    string user_id = 2;
+    string msg = 3;
 }
