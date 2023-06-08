@@ -13,17 +13,17 @@
 ## Запуск:
 Сначала билдим
 ```
-sudo docker-compose build
+docker-compose build
 ```
 Затем стартуем rabbitmq
 ```
-sudo docker-compose up rabbitmq
+docker-compose up rabbitmq
 ```
 Затем стартуем сервер
 ```
-sudo docker-compose up server
+docker-compose up server
 ```
 А затем чтобы стартануть клиент
 ```
-sudo docker-compose run client 
+docker-compose run client 
 ```
